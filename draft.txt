@@ -1,0 +1,122 @@
+// Exemplu de endpoint pentru înregistrare
+app.post('/register', async (req, res) => {
+    const { email, password, role } = req.body;
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = new User({ email, password: hashedPassword, role });
+    await user.save();
+    res.status(201).send('User registered');
+});
+
+// Exemplu de endpoint pentru logare
+app.post('/login', async (req, res) => {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email });
+    if (user && await bcrypt.compare(password, user.password)) {
+        const token = jwt.sign({ userId: user._id, role: user.role }, 'SECRET_KEY', { expiresIn: '1h' });
+        res.json({ token });
+    } else {
+        res.status(400).send('Invalid credentials');
+    }
+});
+
+function authMiddleware(role) {
+    return (req, res, next) => {
+        const token = req.headers['authorization'];
+        if (!token) return res.status(401).send('Access denied');
+        try {
+            const decoded = jwt.verify(token, 'SECRET_KEY');
+            if (role && decoded.role !== role) return res.status(403).send('Forbidden');
+            req.user = decoded;
+            next();
+        } catch (err) {
+            res.status(400).send('Invalid token');
+        }
+    };
+}
+
+app.get('/admin', authMiddleware('admin'), (req, res) => {
+    res.send('Admin dashboard');
+});
+
+const EventSchema = new mongoose.Schema({
+    title: String,
+    start: Date,
+    end: Date,
+    staff: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    manager: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+});
+
+app.post('/events', authMiddleware('manager'), async (req, res) => {
+    const event = new Event(req.body);
+    await event.save();
+    res.status(201).send(event);
+});
+
+// Exemplu de integrare FullCalendar
+document.addEventListener('DOMContentLoaded', function() {
+    const calendarEl = document.getElementById('calendar');
+    const calendar = new FullCalendar.Calendar(calendarEl, {
+        initialView: 'dayGridMonth',
+        events: '/api/events'
+    });
+    calendar.render();
+});
+
+const TaskSchema = new mongoose.Schema({
+    description: String,
+    assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    event: { type: mongoose.Schema.Types.ObjectId, ref: 'Event' },
+    status: { type: String, default: 'pending' }
+});
+
+app.post('/checkin', authMiddleware('staff'), async (req, res) => {
+    const { eventId } = req.body;
+    const checkIn = new CheckIn({ user: req.user.userId, event: eventId });
+    await checkIn.save();
+    res.status(201).send('Checked in');
+});
+
+const { google } = require('googleapis');
+const sheets = google.sheets('v4');
+
+async function updateSheet(data) {
+    const auth = await google.auth.getClient({ scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+    const request = {
+        spreadsheetId: 'YOUR_SPREADSHEET_ID',
+        range: 'Sheet1!A1',
+        valueInputOption: 'RAW',
+        resource: { values: data },
+        auth,
+    };
+    await sheets.spreadsheets.values.update(request);
+}
+
+const PDFDocument = require('pdfkit');
+const fs = require('fs');
+
+function generatePDF(data) {
+    const doc = new PDFDocument();
+    doc.pipe(fs.createWriteStream('report.pdf'));
+    doc.text(JSON.stringify(data));
+    doc.end();
+}
+const io = require('socket.io')(server);
+io.on('connection', (socket) => {
+    socket.on('newTask', (task) => {
+        io.emit('taskAdded', task);
+    });
+});
+
+const nodemailer = require('nodemailer');
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: 'your-email@gmail.com', pass: 'your-password' }
+});
+
+function sendEmail(to, subject, text) {
+    transporter.sendMail({ to, subject, text }, (err) => {
+        if (err) console.error(err);
+    });
+}
+
+
